@@ -2,14 +2,19 @@ package me.mss1r.recruitsmapoverhaul.mixin;
 
 import com.talhanation.recruits.client.gui.worldmap.WorldMapContextMenu;
 import com.talhanation.recruits.client.gui.worldmap.WorldMapScreen;
+import me.mss1r.recruitsmapoverhaul.client.gui.worldmap.WorldMapTeleportCommand;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Overwrite;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Redirect;
 
 import java.lang.reflect.Method;
 import java.util.List;
+import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 
 @Mixin(value = WorldMapContextMenu.class, remap = false)
 public abstract class WorldMapContextMenuMixin {
@@ -24,6 +29,30 @@ public abstract class WorldMapContextMenuMixin {
     @Shadow private double snapshotMouseY;
 
     @Unique private static Method recruitsmapoverhaul$shouldShowMethod;
+
+    @Redirect(
+            method = "<init>",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lcom/talhanation/recruits/client/gui/worldmap/WorldMapContextMenu;addEntry(Ljava/lang/String;Ljava/util/function/BooleanSupplier;Ljava/util/function/Consumer;Ljava/lang/String;)V"
+            )
+    )
+    private void recruitsmapoverhaul$replaceAdminTeleportAction(
+            WorldMapContextMenu menu,
+            String text,
+            BooleanSupplier condition,
+            Consumer<WorldMapScreen> action,
+            String tag
+    ) {
+        Consumer<WorldMapScreen> finalAction = recruitsmapoverhaul$isTeleportAdminEntry(text, tag)
+                ? screen -> {
+                    if (!WorldMapTeleportCommand.teleportFromMap(screen)) {
+                        action.accept(screen);
+                    }
+                }
+                : action;
+        menu.addEntry(text, condition, finalAction, tag);
+    }
 
     /**
      * The original clamps against all entries, including hidden admin/claim actions.
@@ -67,5 +96,11 @@ public abstract class WorldMapContextMenuMixin {
         } catch (Exception ignored) {
             return true;
         }
+    }
+
+    @Unique
+    private boolean recruitsmapoverhaul$isTeleportAdminEntry(String text, String tag) {
+        return "admin".equals(tag)
+                && text.equals(net.minecraft.network.chat.Component.translatable("gui.recruits.map.teleport_admin").getString());
     }
 }

@@ -16,6 +16,7 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.levelgen.Heightmap;
 import org.lwjgl.glfw.GLFW;
 
 import javax.annotation.Nullable;
@@ -456,7 +457,7 @@ public final class WorldMapController {
 
         ChunkPos chunk = new ChunkPos(worldX >> 4, worldZ >> 4);
         if (minecraft.level.getChunkSource().getChunk(chunk.x, chunk.z, false) == null) return 64;
-        int y = minecraft.level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.WORLD_SURFACE, worldX, worldZ) - 1;
+        int y = minecraft.level.getHeight(Heightmap.Types.WORLD_SURFACE, worldX, worldZ);
         return Math.max(y, minecraft.level.getMinBuildHeight());
     }
 }
