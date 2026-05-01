@@ -38,7 +38,7 @@ public final class WorldMapRenderer {
     private static final ResourceLocation MAP_ICONS = ResourceLocation.withDefaultNamespace("textures/map/map_icons.png");
     private static final int MAP_EDGE_COLOR = 0x55000000;
     private static final ItemStack BOAT_STACK = new ItemStack(Items.OAK_BOAT);
-    private static final int[][] XAERO_ARROW_SPANS = {
+    private static final int[][] PLAYER_ARROW_SPANS = {
             {0, 2, 23, 25}, {0, 4, 21, 25}, {0, 6, 19, 25}, {1, 8, 17, 24}, {1, 10, 15, 24},
             {2, 23, -1, -1}, {2, 23, -1, -1}, {3, 22, -1, -1}, {3, 22, -1, -1},
             {4, 21, -1, -1}, {4, 21, -1, -1}, {5, 20, -1, -1}, {5, 20, -1, -1},
@@ -81,7 +81,7 @@ public final class WorldMapRenderer {
 
         RenderSystem.enableBlend();
         RenderSystem.defaultBlendFunc();
-        float brightness = getXaeroStyleMapBrightness();
+        float brightness = getMapBrightness();
 
         for (int tileZ = startTileZ; tileZ <= endTileZ; tileZ++) {
             for (int tileX = startTileX; tileX <= endTileX; tileX++) {
@@ -177,7 +177,7 @@ public final class WorldMapRenderer {
         framebufferPass.close();
     }
 
-    private float getXaeroStyleMapBrightness() {
+    private float getMapBrightness() {
         ClientLevel level = Minecraft.getInstance().level;
         if (level == null || level.dimensionType() == null || !level.dimensionType().hasSkyLight()) {
             return 1.0f;
@@ -218,17 +218,17 @@ public final class WorldMapRenderer {
     }
 
     private void renderOverhauledPlayerIcon(PoseStack pose, GuiGraphics guiGraphics, Player player) {
-        float arrowScale = getXaeroArrowScale();
+        float arrowScale = getPlayerArrowScale();
 
         pose.pushPose();
         pose.translate(0, 2.0f * arrowScale, 0);
         pose.mulPose(Axis.ZP.rotationDegrees(player.getYRot()));
-        renderXaeroArrowGlyph(guiGraphics, 0xE0000000, arrowScale);
+        renderPlayerArrowGlyph(guiGraphics, 0xE0000000, arrowScale);
         pose.popPose();
 
         pose.pushPose();
         pose.mulPose(Axis.ZP.rotationDegrees(player.getYRot()));
-        renderXaeroArrowGlyph(guiGraphics, 0xFF2BEA68, arrowScale);
+        renderPlayerArrowGlyph(guiGraphics, 0xFF2BEA68, arrowScale);
         pose.popPose();
     }
 
@@ -274,7 +274,7 @@ public final class WorldMapRenderer {
         guiGraphics.pose().popPose();
     }
 
-    private float getXaeroArrowScale() {
+    private float getPlayerArrowScale() {
         var window = Minecraft.getInstance().getWindow();
         double guiScale = Math.max(1.0, window.getGuiScale());
         double screenScale = Math.max(1.0, Math.min(window.getWidth(), window.getHeight()) / 1080.0);
@@ -282,19 +282,19 @@ public final class WorldMapRenderer {
         return (float) (screenScale / guiScale * farZoomDampening);
     }
 
-    private void renderXaeroArrowGlyph(GuiGraphics guiGraphics, int color, float size) {
+    private void renderPlayerArrowGlyph(GuiGraphics guiGraphics, int color, float size) {
         PoseStack pose = guiGraphics.pose();
         pose.pushPose();
         pose.scale(size, size, 1.0f);
-        for (int row = 0; row < XAERO_ARROW_SPANS.length; row++) {
-            int[] spans = XAERO_ARROW_SPANS[row];
-            drawXaeroArrowSpan(guiGraphics, spans[0], spans[1], row, color);
-            if (spans[2] >= 0) drawXaeroArrowSpan(guiGraphics, spans[2], spans[3], row, color);
+        for (int row = 0; row < PLAYER_ARROW_SPANS.length; row++) {
+            int[] spans = PLAYER_ARROW_SPANS[row];
+            drawPlayerArrowSpan(guiGraphics, spans[0], spans[1], row, color);
+            if (spans[2] >= 0) drawPlayerArrowSpan(guiGraphics, spans[2], spans[3], row, color);
         }
         pose.popPose();
     }
 
-    private void drawXaeroArrowSpan(GuiGraphics guiGraphics, int startX, int endX, int row, int color) {
+    private void drawPlayerArrowSpan(GuiGraphics guiGraphics, int startX, int endX, int row, int color) {
         guiGraphics.fill(startX - 13, row - 5, endX - 12, row - 4, color);
     }
 }

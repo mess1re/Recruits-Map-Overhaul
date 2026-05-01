@@ -128,6 +128,7 @@ public final class WorldMapController {
             access.recruitsmapoverhaul$setLastMouseX(mouseX);
             access.recruitsmapoverhaul$setLastMouseY(mouseY);
             access.recruitsmapoverhaul$setDragging(true);
+            camera.beginPanDrag(mouseX, mouseY);
         }
 
         return button == 0 || button == 1;
@@ -142,6 +143,7 @@ public final class WorldMapController {
                 return true;
             }
             access.recruitsmapoverhaul$setDragging(false);
+            camera.finishPanDrag(mouseX, mouseY);
         }
         if (claimInfoMenu.isVisible()) claimInfoMenu.mouseReleased(mouseX, mouseY, button);
         return true;
@@ -159,9 +161,9 @@ public final class WorldMapController {
             return true;
         }
         if (access.recruitsmapoverhaul$isDragging()) {
-            camera.panByScreenDelta(
-                    mouseX - access.recruitsmapoverhaul$getLastMouseX(),
-                    mouseY - access.recruitsmapoverhaul$getLastMouseY());
+            double deltaX = mouseX - access.recruitsmapoverhaul$getLastMouseX();
+            double deltaY = mouseY - access.recruitsmapoverhaul$getLastMouseY();
+            camera.dragByScreenDelta(mouseX, mouseY, deltaX, deltaY);
             access.recruitsmapoverhaul$setLastMouseX(mouseX);
             access.recruitsmapoverhaul$setLastMouseY(mouseY);
             if (claimInfoMenu.isVisible()) claimInfoMenu.close();

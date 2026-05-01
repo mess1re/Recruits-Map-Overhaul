@@ -19,7 +19,9 @@ public class ChunkImage {
             return 0x00000000;
         }
 
-        return resolveXaeroStyleColor(level, sample);
+        int northHeight = sampleHeight(level, worldX, worldZ - 1, sample.height());
+        int northWestHeight = sampleHeight(level, worldX - 1, worldZ - 1, sample.height());
+        return resolveTerrainColor(level, sample, northHeight, northWestHeight);
     }
 
     public NativeImage getNativeImage() {
@@ -55,20 +57,55 @@ public class ChunkImage {
 
     private NativeImage generateChunkImage(ClientLevel level, ChunkPos pos) {
         NativeImage img = new NativeImage(NativeImage.Format.RGBA, 16, 16, true);
+        MapSample[][] samples = loadSampleGrid(level, pos);
+
         for (int x = 0; x < 16; x++) {
             for (int z = 0; z < 16; z++) {
-                int worldX = pos.getMinBlockX() + x;
-                int worldZ = pos.getMinBlockZ() + z;
-                img.setPixelRGBA(x, z, sampleMapColor(level, worldX, worldZ));
+                MapSample sample = samples[x + 1][z + 1];
+                if (sample == null) {
+                    img.setPixelRGBA(x, z, 0x00000000);
+                    continue;
+                }
+
+                int northHeight = cachedHeight(samples[x + 1][z], sample.height());
+                int northWestHeight = cachedHeight(samples[x][z], sample.height());
+                img.setPixelRGBA(x, z, resolveTerrainColor(level, sample, northHeight, northWestHeight));
             }
         }
         img.untrack();
         return img;
     }
 
-    private static int resolveXaeroStyleColor(ClientLevel level, MapSample sample) {
+    private static MapSample[][] loadSampleGrid(ClientLevel level, ChunkPos pos) {
+        MapSample[][] samples = new MapSample[17][17];
+        int minBlockX = pos.getMinBlockX();
+        int minBlockZ = pos.getMinBlockZ();
+
+        for (int x = -1; x < 16; x++) {
+            for (int z = -1; z < 16; z++) {
+                samples[x + 1][z + 1] = MapStateSampler.findTopMapSample(level, minBlockX + x, minBlockZ + z);
+            }
+        }
+
+        return samples;
+    }
+
+    private static int sampleHeight(ClientLevel level, int worldX, int worldZ, int fallback) {
+        MapSample sample = MapStateSampler.findTopMapSample(level, worldX, worldZ);
+        return cachedHeight(sample, fallback);
+    }
+
+    private static int cachedHeight(MapSample sample, int fallback) {
+        return sample != null ? sample.height() : fallback;
+    }
+
+    private static int resolveTerrainColor(ClientLevel level, MapSample sample, int northHeight, int northWestHeight) {
         BlockPos pos = sample.pos();
         BlockState state = sample.state();
+        if (MapStateSampler.isTransparentOverlay(level, pos, state)) {
+            return resolveTransparentOverlayColor(level, sample);
+        }
+
         boolean water = MapStateSampler.isWaterLike(state);
         int rgb = water
                 ? MapBlockColorResolver.resolveWaterRgb(level, pos, state)
@@ -86,7 +123,42 @@ public class ChunkImage {
 
         return MapBlockColorResolver.applyBrightnessToNativeColor(
                 rgb,
-                MapReliefShading.computeLandBrightness(level, sample)
+                MapReliefShading.computeLandBrightness(level, sample, northHeight, northWestHeight)
         );
+    }
+
+    private static int resolveTransparentOverlayColor(ClientLevel level, MapSample overlaySample) {
+        int overlayRgb = MapBlockColorResolver.resolveBaseRgb(level, overlaySample.pos(), overlaySample.state());
+        if ((overlayRgb & 0x00FFFFFF) == 0) {
+            return 0x00000000;
+        }
+
+        MapSample baseSample = MapStateSampler.findUnderOverlaySample(level, overlaySample.pos());
+        if (baseSample == null) {
+            return MapBlockColorResolver.applyBrightnessToNativeColor(overlayRgb, 1.0f);
+        }
+
+        int northHeight = sampleHeight(level, baseSample.pos().getX(), baseSample.pos().getZ() - 1, baseSample.height());
+        int northWestHeight = sampleHeight(level, baseSample.pos().getX() - 1, baseSample.pos().getZ() - 1, baseSample.height());
+        int baseNative = resolveTerrainColor(level, baseSample, northHeight, northWestHeight);
+        int baseAlpha = (baseNative >> 24) & 0xFF;
+        if (baseAlpha == 0) {
+            return MapBlockColorResolver.applyBrightnessToNativeColor(overlayRgb, 1.0f);
+        }
+
+        int baseRgb = nativeToRgb(baseNative);
+        int blendedRgb = MapBlockColorResolver.blendRgb(
+                baseRgb,
+                overlayRgb,
+                MapStateSampler.getTransparentOverlayAlpha(overlaySample.state())
+        );
+        return MapBlockColorResolver.applyBrightnessToNativeColor(blendedRgb, 1.0f);
+    }
+
+    private static int nativeToRgb(int nativeColor) {
+        int red = nativeColor & 0xFF;
+        int green = (nativeColor >> 8) & 0xFF;
+        int blue = (nativeColor >> 16) & 0xFF;
+        return (red << 16) | (green << 8) | blue;
     }
 }

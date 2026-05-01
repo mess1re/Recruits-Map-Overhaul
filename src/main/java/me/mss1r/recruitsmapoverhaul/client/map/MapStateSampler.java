@@ -1,17 +1,31 @@
 package me.mss1r.recruitsmapoverhaul.client.map;
 
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.renderer.RenderType;
+import net.minecraft.client.resources.model.BakedModel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.GlassBlock;
+import net.minecraft.world.level.block.IceBlock;
 import net.minecraft.world.level.block.RenderShape;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.material.Fluids;
 import net.minecraft.world.level.material.MapColor;
+import net.minecraftforge.client.model.data.ModelData;
+
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 final class MapStateSampler {
+    private static final float ICE_OVERLAY_ALPHA = 216.0f / 255.0f;
+    private static final float TRANSPARENT_OVERLAY_ALPHA = 127.0f / 255.0f;
+    private static final Map<BlockState, Boolean> TRANSPARENT_OVERLAY_CACHE = new ConcurrentHashMap<>();
+
     private MapStateSampler() {
     }
 
@@ -51,13 +65,28 @@ final class MapStateSampler {
         return null;
     }
 
-    static int getSurfaceHeight(ClientLevel level, int x, int z) {
-        return level.getHeight(Heightmap.Types.WORLD_SURFACE, x, z) - 1;
+    static MapSample findUnderOverlaySample(ClientLevel level, BlockPos pos) {
+        BlockPos.MutableBlockPos mutable = pos.mutable();
+        int minY = level.getMinBuildHeight();
+        int scanned = 0;
+
+        while (mutable.getY() > minY && scanned < 32) {
+            mutable.move(Direction.DOWN);
+            scanned++;
+            BlockState state = level.getBlockState(mutable);
+            if (state.isAir() || isTransparentOverlay(level, mutable, state)) {
+                continue;
+            }
+            if (isWaterLike(state) || isRenderableMapState(level, mutable, state)) {
+                return new MapSample(mutable.immutable(), state, mutable.getY());
+            }
+        }
+
+        return null;
     }
 
-    static int getRenderableHeight(ClientLevel level, int x, int z, int fallback) {
-        MapSample sample = findTopMapSample(level, x, z);
-        return sample != null ? sample.height() : fallback;
+    static int getSurfaceHeight(ClientLevel level, int x, int z) {
+        return level.getHeight(Heightmap.Types.WORLD_SURFACE, x, z) - 1;
     }
 
     static int getWaterDepth(ClientLevel level, BlockPos pos) {
@@ -93,6 +122,32 @@ final class MapStateSampler {
         return state.getFluidState().is(Fluids.WATER);
     }
 
+    static boolean isTransparentOverlay(ClientLevel level, BlockPos pos, BlockState state) {
+        if (state == null || state.isAir() || isWaterLike(state)) {
+            return false;
+        }
+
+        Block block = state.getBlock();
+        if (block == Blocks.GLASS || block == Blocks.GLASS_PANE) {
+            return false;
+        }
+
+        MapColor mapColor = state.getMapColor(level, pos);
+        if (mapColor == null || mapColor.col == 0) {
+            return false;
+        }
+
+        if (block instanceof GlassBlock) {
+            return true;
+        }
+
+        return TRANSPARENT_OVERLAY_CACHE.computeIfAbsent(state, MapStateSampler::hasTranslucentRenderType);
+    }
+
+    static float getTransparentOverlayAlpha(BlockState state) {
+        return state.getBlock() instanceof IceBlock ? ICE_OVERLAY_ALPHA : TRANSPARENT_OVERLAY_ALPHA;
+    }
+
     private static boolean isRenderableMapState(ClientLevel level, BlockPos pos, BlockState state) {
         if (state == null || state.isAir()) {
             return false;
@@ -113,5 +168,17 @@ final class MapStateSampler {
 
         MapColor mapColor = state.getMapColor(level, pos);
         return mapColor != null && mapColor.col != 0;
+    }
+
+    private static boolean hasTranslucentRenderType(BlockState state) {
+        try {
+            BakedModel model = Minecraft.getInstance().getBlockRenderer().getBlockModelShaper().getBlockModel(state);
+            if (model == null) {
+                return true;
+            }
+            return model.getRenderTypes(state, RandomSource.create(42L), ModelData.EMPTY).contains(RenderType.translucent());
+        } catch (RuntimeException ignored) {
+            return false;
+        }
     }
 }

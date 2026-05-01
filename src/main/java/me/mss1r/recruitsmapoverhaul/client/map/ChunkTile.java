@@ -23,7 +23,7 @@ public class ChunkTile {
     private final DynamicTexture[] textures = new DynamicTexture[MAX_MIP_LEVEL + 1];
     private final ResourceLocation[] textureIds = new ResourceLocation[MAX_MIP_LEVEL + 1];
     private final boolean[] textureDirty = new boolean[MAX_MIP_LEVEL + 1];
-    private final boolean[] xaeroSamplingApplied = new boolean[MAX_MIP_LEVEL + 1];
+    private final boolean[] textureSamplingApplied = new boolean[MAX_MIP_LEVEL + 1];
     private boolean needsUpdate = false;
 
     public static final int TILE_SIZE = 10;
@@ -116,17 +116,17 @@ public class ChunkTile {
                     "chunktile_" + tileX + "_" + tileZ + "_mip" + mipLevel,
                     this.textures[mipLevel]);
             this.textureDirty[mipLevel] = false;
-            this.xaeroSamplingApplied[mipLevel] = false;
+            this.textureSamplingApplied[mipLevel] = false;
         }
 
         if (this.textureDirty[mipLevel]) {
             this.textures[mipLevel].setPixels(copyImage(levelImage));
             this.textures[mipLevel].upload();
             this.textureDirty[mipLevel] = false;
-            this.xaeroSamplingApplied[mipLevel] = false;
+            this.textureSamplingApplied[mipLevel] = false;
         }
 
-        applyXaeroSamplingMode(mc, mipLevel);
+        applyMapSamplingMode(mc, mipLevel);
         return this.textureIds[mipLevel];
     }
 
@@ -150,7 +150,7 @@ public class ChunkTile {
         mipImage.untrack();
         this.mipImages[mipLevel] = mipImage;
         this.textureDirty[mipLevel] = true;
-        this.xaeroSamplingApplied[mipLevel] = false;
+        this.textureSamplingApplied[mipLevel] = false;
         return mipImage;
     }
 
@@ -193,12 +193,12 @@ public class ChunkTile {
         return copy;
     }
 
-    private void applyXaeroSamplingMode(Minecraft mc, int mipLevel) {
-        if (this.textureIds[mipLevel] == null || this.xaeroSamplingApplied[mipLevel]) return;
+    private void applyMapSamplingMode(Minecraft mc, int mipLevel) {
+        if (this.textureIds[mipLevel] == null || this.textureSamplingApplied[mipLevel]) return;
         mc.getTextureManager().bindForSetup(this.textureIds[mipLevel]);
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR);
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_NEAREST);
-        this.xaeroSamplingApplied[mipLevel] = true;
+        this.textureSamplingApplied[mipLevel] = true;
     }
 
     public void saveToFile(File tileFile) {
@@ -263,11 +263,11 @@ public class ChunkTile {
                 this.mipImages[i] = null;
             }
             this.textureDirty[i] = true;
-            this.xaeroSamplingApplied[i] = false;
+            this.textureSamplingApplied[i] = false;
         }
         this.mipImages[0] = this.image;
         this.textureDirty[0] = true;
-        this.xaeroSamplingApplied[0] = false;
+        this.textureSamplingApplied[0] = false;
     }
 
     private void closeTextures() {
@@ -284,7 +284,7 @@ public class ChunkTile {
             this.textureIds[i] = null;
             this.mipImages[i] = null;
             this.textureDirty[i] = false;
-            this.xaeroSamplingApplied[i] = false;
+            this.textureSamplingApplied[i] = false;
         }
     }
 

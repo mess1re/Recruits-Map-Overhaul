@@ -10,10 +10,10 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.lighting.LevelLightEngine;
 import net.minecraft.world.level.material.FluidState;
 
-final class XaeroTintSampler implements BlockAndTintGetter {
+final class MapTintSampler implements BlockAndTintGetter {
     private ClientLevel level;
 
-    XaeroTintSampler use(ClientLevel level) {
+    MapTintSampler use(ClientLevel level) {
         this.level = level;
         return this;
     }

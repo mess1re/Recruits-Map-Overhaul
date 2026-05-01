@@ -18,7 +18,7 @@ import java.util.List;
 import java.util.Map;
 
 final class MapBlockColorResolver {
-    private static final XaeroTintSampler TINT_SAMPLER = new XaeroTintSampler();
+    private static final MapTintSampler TINT_SAMPLER = new MapTintSampler();
     private static final Map<BlockState, TextureColor> TEXTURE_COLOR_CACHE = new HashMap<>();
 
     private MapBlockColorResolver() {
@@ -94,7 +94,7 @@ final class MapBlockColorResolver {
             result = !upQuads.isEmpty()
                     ? averageSprite(upQuads.get(0).getSprite(), upQuads.get(0).getTintIndex())
                     : averageSprite(model.getParticleIcon(ModelData.EMPTY), 0);
-        } catch (Throwable ignored) {
+        } catch (RuntimeException ignored) {
             result = TextureColor.EMPTY;
         }
 
@@ -150,7 +150,7 @@ final class MapBlockColorResolver {
         return (red << 16) | (green << 8) | blue;
     }
 
-    private static int blendRgb(int bottom, int top, float topAlpha) {
+    static int blendRgb(int bottom, int top, float topAlpha) {
         float bottomAlpha = 1.0f - topAlpha;
         int red = clampColor(Math.round(((bottom >> 16) & 0xFF) * bottomAlpha + ((top >> 16) & 0xFF) * topAlpha));
         int green = clampColor(Math.round(((bottom >> 8) & 0xFF) * bottomAlpha + ((top >> 8) & 0xFF) * topAlpha));

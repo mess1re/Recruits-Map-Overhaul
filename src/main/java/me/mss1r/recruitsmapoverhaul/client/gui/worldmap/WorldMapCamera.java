@@ -34,6 +34,7 @@ public final class WorldMapCamera {
     private double zoomAnchorScreenZ = 0.0;
     private double zoomAnchorWorldX = 0.0;
     private double zoomAnchorWorldZ = 0.0;
+    private final PanInertia panInertia = new PanInertia();
 
     public WorldMapCamera(WorldMapScreen screen, WorldMapScreenAccess access) {
         this.screen = screen;
@@ -50,6 +51,7 @@ public final class WorldMapCamera {
         }
 
         lastAnimationNanos = 0L;
+        panInertia.reset();
     }
 
     public void centerOnPlayer(Player player) {
@@ -60,6 +62,7 @@ public final class WorldMapCamera {
         targetOffsetZ = offsetZ();
         targetScale = scale();
         zoomAnchored = false;
+        panInertia.reset();
         rememberCurrentView();
     }
 
@@ -71,6 +74,7 @@ public final class WorldMapCamera {
         targetOffsetZ = offsetZ();
         targetScale = scale();
         zoomAnchored = false;
+        panInertia.reset();
         rememberCurrentView();
     }
 
@@ -109,6 +113,19 @@ public final class WorldMapCamera {
             return;
         }
 
+        if (panInertia.isActive()) {
+            PanInertia.Offset offset = panInertia.currentOffset();
+            setOffsetX(offset.x());
+            setOffsetZ(offset.z());
+            targetOffsetX = panInertia.targetOffsetX();
+            targetOffsetZ = panInertia.targetOffsetZ();
+            targetScale = scale();
+            if (panInertia.isAtTarget(offset)) {
+                panInertia.reset();
+            }
+            return;
+        }
+
         double alpha = 1.0 - Math.pow(0.001, dt / 0.18);
         setScale(smoothValue(scale(), targetScale, alpha, 0.0005));
         setOffsetX(smoothValue(offsetX(), targetOffsetX, alpha, 0.02));
@@ -116,6 +133,7 @@ public final class WorldMapCamera {
     }
 
     public void panByScreenDelta(double deltaX, double deltaZ) {
+        panInertia.reset();
         setOffsetX(offsetX() + deltaX);
         setOffsetZ(offsetZ() + deltaZ);
         targetOffsetX = offsetX();
@@ -125,7 +143,35 @@ public final class WorldMapCamera {
         rememberCurrentView();
     }
 
+    public void beginPanDrag(double mouseX, double mouseY) {
+        panInertia.begin(mouseX, mouseY);
+    }
+
+    public void dragByScreenDelta(double mouseX, double mouseY, double deltaX, double deltaZ) {
+        setOffsetX(offsetX() + deltaX);
+        setOffsetZ(offsetZ() + deltaZ);
+        targetOffsetX = offsetX();
+        targetOffsetZ = offsetZ();
+        targetScale = scale();
+        zoomAnchored = false;
+        panInertia.recordDrag(mouseX, mouseY, deltaX, deltaZ);
+
+        rememberCurrentView();
+    }
+
+    public void finishPanDrag(double mouseX, double mouseY) {
+        if (!panInertia.finish(mouseX, mouseY, scale(), MIN_SCALE, offsetX(), offsetZ())) {
+            return;
+        }
+
+        targetOffsetX = panInertia.targetOffsetX();
+        targetOffsetZ = panInertia.targetOffsetZ();
+        targetScale = scale();
+        rememberCurrentView();
+    }
+
     public void zoomAt(double mouseX, double mouseY, double scrollY) {
+        panInertia.reset();
         double zoomFactor = Math.pow(ZOOM_STEP_BASE, scrollY);
         double newScale = clampScale(targetScale * zoomFactor);
 

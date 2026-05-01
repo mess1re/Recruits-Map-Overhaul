@@ -31,17 +31,12 @@ final class MapReliefShading {
         return clamp(brightness, 0.74f, 1.0f);
     }
 
-    static ColorMultiplier computeLandBrightness(ClientLevel level, MapSample sample) {
-        int x = sample.pos().getX();
-        int z = sample.pos().getZ();
+    static ColorMultiplier computeLandBrightness(ClientLevel level, MapSample sample, int northHeight, int northWestHeight) {
         int height = sample.height();
-        int northHeight = MapStateSampler.getRenderableHeight(level, x, z - 1, height);
-        int northWestHeight = MapStateSampler.getRenderableHeight(level, x - 1, z - 1, height);
-
         int verticalSlope = clampInt(height - northHeight, -128, 127);
         int diagonalSlope = clampInt(height - northWestHeight, -128, 127);
         float depthBrightness = clamp(height / 63.0f, 0.90f, 1.0f);
-        float whiteLight = AMBIENT_WHITE + computeXaeroSlopeLight(verticalSlope, diagonalSlope);
+        float whiteLight = AMBIENT_WHITE + computeSlopeLight(verticalSlope, diagonalSlope);
 
         return new ColorMultiplier(
                 (getShadowR(level) * AMBIENT_COLORED + whiteLight) * depthBrightness,
@@ -50,7 +45,7 @@ final class MapReliefShading {
         );
     }
 
-    private static float computeXaeroSlopeLight(int verticalSlope, int diagonalSlope) {
+    private static float computeSlopeLight(int verticalSlope, int diagonalSlope) {
         float cos = 0.0f;
         float crossZ = -verticalSlope;
         if (crossZ < 1.0f) {
