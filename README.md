@@ -12,6 +12,7 @@ License: `MIT`
 - Per-world terrain cache with changed-chunk refreshes
 - Configurable player arrow style
 - Optional coordinate readout and FPS overlay
+- Safer admin teleport with centered `/tp` coordinates and surface Y detection
 
 ## Compatibility
 
