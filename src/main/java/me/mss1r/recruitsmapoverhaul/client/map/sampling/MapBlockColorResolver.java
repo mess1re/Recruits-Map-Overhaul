@@ -1,4 +1,4 @@
-package me.mss1r.recruitsmapoverhaul.client.map;
+package me.mss1r.recruitsmapoverhaul.client.map.sampling;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.color.block.BlockColors;

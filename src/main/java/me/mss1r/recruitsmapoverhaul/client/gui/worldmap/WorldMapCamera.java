@@ -202,6 +202,15 @@ public final class WorldMapCamera {
         savedTargetCenterWorldZ = (screen.height / 2.0 - targetOffsetZ) / targetScale;
     }
 
+    public boolean isMoving() {
+        return access.recruitsmapoverhaul$isDragging()
+                || zoomAnchored
+                || panInertia.isActive()
+                || Math.abs(scale() - targetScale) > 0.001
+                || Math.abs(offsetX() - targetOffsetX) > 0.25
+                || Math.abs(offsetZ() - targetOffsetZ) > 0.25;
+    }
+
     public double offsetX() {
         return access.recruitsmapoverhaul$getOffsetX();
     }

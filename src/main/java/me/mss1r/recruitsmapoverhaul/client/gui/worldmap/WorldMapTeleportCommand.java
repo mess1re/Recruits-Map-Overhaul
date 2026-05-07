@@ -12,6 +12,11 @@ import net.minecraft.world.level.levelgen.Heightmap;
 import java.util.Locale;
 
 public final class WorldMapTeleportCommand {
+    private static final int SURFACE_CORRECTION_TIMEOUT_TICKS = 80;
+
+    private static BlockPos pendingSurfaceCorrectionPos;
+    private static int pendingSurfaceCorrectionTicks;
+
     private WorldMapTeleportCommand() {
     }
 
@@ -22,23 +27,79 @@ public final class WorldMapTeleportCommand {
         }
 
         BlockPos clickedPos = screen.getClickedBlockPos();
-        ChunkPos chunk = new ChunkPos(clickedPos);
-        if (minecraft.level.getChunkSource().getChunk(chunk.x, chunk.z, false) == null) {
-            return false;
+        minecraft.setScreen(null);
+
+        if (!isChunkLoaded(minecraft.level, clickedPos)) {
+            sendCommand(minecraft, buildSkyTeleportCommand(minecraft.level, clickedPos));
+            scheduleSurfaceCorrection(clickedPos);
+            return true;
         }
 
-        int safeY = resolveSafeY(minecraft.level, clickedPos.getX(), clickedPos.getZ());
-        String command = String.format(Locale.ROOT,
+        sendCommand(minecraft, buildLoadedChunkTeleportCommand(minecraft.level, clickedPos));
+        return true;
+    }
+
+    public static void tickPendingTeleport() {
+        if (pendingSurfaceCorrectionPos == null) {
+            return;
+        }
+
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.level == null || minecraft.player == null || minecraft.player.connection == null) {
+            clearSurfaceCorrection();
+            return;
+        }
+
+        if (++pendingSurfaceCorrectionTicks > SURFACE_CORRECTION_TIMEOUT_TICKS) {
+            clearSurfaceCorrection();
+            return;
+        }
+
+        if (!isChunkLoaded(minecraft.level, pendingSurfaceCorrectionPos)) {
+            return;
+        }
+
+        sendCommand(minecraft, buildLoadedChunkTeleportCommand(minecraft.level, pendingSurfaceCorrectionPos));
+        clearSurfaceCorrection();
+    }
+
+    private static boolean isChunkLoaded(ClientLevel level, BlockPos pos) {
+        ChunkPos chunk = new ChunkPos(pos);
+        return level.getChunkSource().getChunk(chunk.x, chunk.z, false) != null;
+    }
+
+    private static void scheduleSurfaceCorrection(BlockPos pos) {
+        pendingSurfaceCorrectionPos = pos;
+        pendingSurfaceCorrectionTicks = 0;
+    }
+
+    private static void clearSurfaceCorrection() {
+        pendingSurfaceCorrectionPos = null;
+        pendingSurfaceCorrectionTicks = 0;
+    }
+
+    private static void sendCommand(Minecraft minecraft, String command) {
+        if (!minecraft.player.connection.sendUnsignedCommand(command)) {
+            minecraft.player.connection.sendCommand(command);
+        }
+    }
+
+    private static String buildLoadedChunkTeleportCommand(ClientLevel level, BlockPos clickedPos) {
+        int safeY = resolveSafeY(level, clickedPos.getX(), clickedPos.getZ());
+        return String.format(Locale.ROOT,
                 "tp @s %.1f %d %.1f",
                 clickedPos.getX() + 0.5D,
                 safeY,
                 clickedPos.getZ() + 0.5D);
+    }
 
-        minecraft.setScreen(null);
-        if (!minecraft.player.connection.sendUnsignedCommand(command)) {
-            minecraft.player.connection.sendCommand(command);
-        }
-        return true;
+    private static String buildSkyTeleportCommand(ClientLevel level, BlockPos clickedPos) {
+        int skyY = level.getMaxBuildHeight() - 4;
+        return String.format(Locale.ROOT,
+                "tp @s %.1f %d %.1f",
+                clickedPos.getX() + 0.5D,
+                skyY,
+                clickedPos.getZ() + 0.5D);
     }
 
     private static int resolveSafeY(ClientLevel level, int x, int z) {

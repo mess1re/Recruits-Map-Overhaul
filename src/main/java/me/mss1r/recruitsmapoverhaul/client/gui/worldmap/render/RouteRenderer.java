@@ -1,8 +1,8 @@
-package me.mss1r.recruitsmapoverhaul.client.render;
+package me.mss1r.recruitsmapoverhaul.client.gui.worldmap.render;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
-import me.mss1r.recruitsmapoverhaul.client.map.ChunkTileManager;
+import me.mss1r.recruitsmapoverhaul.client.map.cache.ChunkTileManager;
 import com.talhanation.recruits.Main;
 import com.talhanation.recruits.world.RecruitsRoute;
 import com.talhanation.recruits.world.RecruitsRoute.Waypoint;

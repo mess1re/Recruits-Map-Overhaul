@@ -1,4 +1,4 @@
-package me.mss1r.recruitsmapoverhaul.client.map;
+package me.mss1r.recruitsmapoverhaul.client.map.sampling;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.state.BlockState;

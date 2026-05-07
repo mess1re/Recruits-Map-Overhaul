@@ -1,7 +1,8 @@
-package me.mss1r.recruitsmapoverhaul.client.map;
+package me.mss1r.recruitsmapoverhaul.client.map.cache;
 
 import com.mojang.blaze3d.platform.NativeImage;
 import com.mojang.blaze3d.vertex.VertexConsumer;
+import me.mss1r.recruitsmapoverhaul.client.map.sampling.ChunkImage;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.renderer.RenderType;
@@ -202,12 +203,22 @@ public class ChunkTile {
     }
 
     public void saveToFile(File tileFile) {
-        if (this.image == null || !this.needsUpdate) return;
+        NativeImage snapshot = createSaveSnapshot();
+        if (snapshot == null) return;
         try {
             tileFile.getParentFile().mkdirs();
-            this.image.writeToFile(tileFile);
-            this.needsUpdate = false;
+            snapshot.writeToFile(tileFile);
         } catch (IOException ignored) {}
+        finally {
+            snapshot.close();
+        }
+    }
+
+    NativeImage createSaveSnapshot() {
+        if (this.image == null || !this.needsUpdate) return null;
+        NativeImage snapshot = copyImage(this.image);
+        this.needsUpdate = false;
+        return snapshot;
     }
 
     public void render(GuiGraphics guiGraphics, float x, float y, float width, float height, float brightness) {

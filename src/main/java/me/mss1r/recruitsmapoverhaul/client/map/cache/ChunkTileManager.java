@@ -1,14 +1,12 @@
-package me.mss1r.recruitsmapoverhaul.client.map;
+package me.mss1r.recruitsmapoverhaul.client.map.cache;
 
+import me.mss1r.recruitsmapoverhaul.client.map.sampling.ChunkImage;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.multiplayer.ServerData;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.storage.LevelResource;
 
 import java.io.File;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -17,7 +15,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
 
 public class ChunkTileManager {
     private static final String CACHE_VERSION = "v1";
@@ -39,9 +36,9 @@ public class ChunkTileManager {
     private final Set<Long> dirtyChunkKeys = new HashSet<>();
     private final Set<Long> pendingChunkKeys = new HashSet<>();
     private final Set<String> missingTileKeys = new HashSet<>();
+    private final AsyncTileSaver tileSaver = new AsyncTileSaver();
     private final Minecraft mc = Minecraft.getInstance();
-    private File worldMapDir;
-    private String storageId;
+    private WorldMapCachePath cachePath;
     private int currentTileX = Integer.MAX_VALUE;
     private int currentTileZ = Integer.MAX_VALUE;
     private final Map<String, Long> lastUpdateTimes = new HashMap<>();
@@ -57,24 +54,20 @@ public class ChunkTileManager {
 
     public void initialize(Level level) {
         if (level == null) return;
-        String newStorageId = detectStorageId();
-        if (newStorageId == null || newStorageId.isBlank()) {
-            newStorageId = "unknown_" + CACHE_VERSION;
-        }
+        WorldMapCachePath newCachePath = WorldMapCachePath.resolve(mc, CACHE_VERSION);
 
-        if (this.storageId == null || !this.storageId.equals(newStorageId)) {
+        if (this.cachePath == null || !this.cachePath.sameStorage(newCachePath)) {
             saveAndReleaseTiles();
             resetRuntimeState();
-            this.storageId = newStorageId;
+            this.cachePath = newCachePath;
         }
 
-        this.worldMapDir = new File(mc.gameDirectory, "recruits/worldmap/" + this.storageId);
-        this.worldMapDir.mkdirs();
+        this.cachePath.ensureDirectory();
     }
 
     public void updateCurrentTile() {
         if (mc.level == null || mc.player == null) return;
-        if (worldMapDir == null) initialize(mc.level);
+        if (cachePath == null) initialize(mc.level);
 
         int chunkX = mc.player.chunkPosition().x;
         int chunkZ = mc.player.chunkPosition().z;
@@ -128,7 +121,7 @@ public class ChunkTileManager {
         File tileFile = getTileFile(tileX, tileZ);
         if (tileFile.exists()) tile.mergeWithExistingTile(tileFile);
         updateOnlyLoadedChunks(tile);
-        tile.saveToFile(tileFile);
+        queueTileSave(tile);
         lastUpdateTimes.put("tile:" + tileX + "_" + tileZ, System.currentTimeMillis());
     }
 
@@ -157,7 +150,7 @@ public class ChunkTileManager {
             return;
         }
 
-        tile.saveToFile(getTileFile(tile.getTileX(), tile.getTileZ()));
+        queueTileSave(tile);
         lastSaveTimes.put(key, now);
     }
 
@@ -180,7 +173,7 @@ public class ChunkTileManager {
     }
 
     public void updateVisibleArea(double offsetX, double offsetZ, double scale, int screenWidth, int screenHeight) {
-        if (mc.level == null || mc.player == null || worldMapDir == null) return;
+        if (mc.level == null || mc.player == null || cachePath == null) return;
 
         long now = System.currentTimeMillis();
         if (now - lastVisibleQueueTime >= VISIBLE_QUEUE_INTERVAL_MS) {
@@ -192,7 +185,7 @@ public class ChunkTileManager {
 
     public void updateAroundPlayer(int chunkRadius) {
         if (mc.level == null || mc.player == null) return;
-        if (worldMapDir == null) initialize(mc.level);
+        if (cachePath == null) initialize(mc.level);
 
         long now = System.currentTimeMillis();
         if (now - lastBackgroundQueueTime >= BACKGROUND_QUEUE_INTERVAL_MS) {
@@ -210,7 +203,7 @@ public class ChunkTileManager {
         if (mc.level.dimension() != Level.OVERWORLD) {
             return;
         }
-        if (worldMapDir == null) {
+        if (cachePath == null) {
             initialize(mc.level);
         }
 
@@ -401,7 +394,7 @@ public class ChunkTileManager {
             return tile;
         }
 
-        if (missingTileKeys.contains(key) || worldMapDir == null) return null;
+        if (missingTileKeys.contains(key) || cachePath == null) return null;
         File tileFile = getTileFile(tileX, tileZ);
         if (!tileFile.exists() || tileFile.length() <= 0L) {
             missingTileKeys.add(key);
@@ -410,38 +403,14 @@ public class ChunkTileManager {
         return getOrCreateTile(tileX, tileZ);
     }
 
-    private static String detectStorageId() {
-        try {
-            Minecraft mc = Minecraft.getInstance();
-            if (mc.getSingleplayerServer() != null) {
-                var server = mc.getSingleplayerServer();
-                java.nio.file.Path root = server.getWorldPath(LevelResource.ROOT).toAbsolutePath().normalize();
-                long seed = 0L;
-                try {
-                    seed = server.overworld().getSeed();
-                } catch (Exception ignored) {}
-
-                String rawId = "sp|" + root + "|seed=" + seed + "|" + CACHE_VERSION;
-                return "sp_" + UUID.nameUUIDFromBytes(rawId.getBytes(StandardCharsets.UTF_8));
-            }
-            ServerData sd = mc.getCurrentServer();
-            if (sd != null && sd.ip != null && !sd.ip.isEmpty()) {
-                String rawId = "mp|" + sd.ip + "|" + CACHE_VERSION;
-                return "mp_" + UUID.nameUUIDFromBytes(rawId.getBytes(StandardCharsets.UTF_8));
-            }
-        } catch (Exception ignored) {}
-        return "unknown_" + CACHE_VERSION;
-    }
-
     private File getTileFile(int tileX, int tileZ) {
-        return new File(worldMapDir, tileX + "_" + tileZ + ".png");
+        return cachePath.tileFile(tileX, tileZ);
     }
 
     public void close() {
         saveAndReleaseTiles();
         resetRuntimeState();
-        this.worldMapDir = null;
-        this.storageId = null;
+        this.cachePath = null;
     }
 
     public void flush() {
@@ -450,16 +419,22 @@ public class ChunkTileManager {
 
     private void saveAndReleaseTiles() {
         saveTiles();
+        tileSaver.flush();
         for (ChunkTile tile : loadedTiles.values()) {
             tile.close();
         }
     }
 
     private void saveTiles() {
-        if (this.worldMapDir == null) return;
+        if (this.cachePath == null) return;
         for (ChunkTile tile : loadedTiles.values()) {
-            tile.saveToFile(getTileFile(tile.getTileX(), tile.getTileZ()));
+            queueTileSave(tile);
         }
+    }
+
+    private void queueTileSave(ChunkTile tile) {
+        if (tile == null) return;
+        tileSaver.saveLater(getTileFile(tile.getTileX(), tile.getTileZ()), tile.createSaveSnapshot());
     }
 
     private void resetRuntimeState() {
@@ -483,7 +458,7 @@ public class ChunkTileManager {
     }
 
     public boolean isChunkExplored(ChunkPos chunk) {
-        if (worldMapDir == null) return false;
+        if (cachePath == null) return false;
         int tileX = ChunkTile.chunkToTileCoord(chunk.x);
         int tileZ = ChunkTile.chunkToTileCoord(chunk.z);
         ChunkTile tile = getOrCreateTile(tileX, tileZ);

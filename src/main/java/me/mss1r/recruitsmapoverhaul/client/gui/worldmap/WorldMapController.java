@@ -7,10 +7,11 @@ import com.talhanation.recruits.client.gui.worldmap.WorldMapScreen;
 import com.talhanation.recruits.config.RecruitsClientConfig;
 import com.talhanation.recruits.world.RecruitsClaim;
 import com.talhanation.recruits.world.RecruitsRoute;
+import me.mss1r.recruitsmapoverhaul.api.WorldMapView;
 import me.mss1r.recruitsmapoverhaul.client.gui.worldmap.render.WorldMapRenderer;
-import me.mss1r.recruitsmapoverhaul.client.map.ChunkTileManager;
-import me.mss1r.recruitsmapoverhaul.client.render.ClaimRenderer;
-import me.mss1r.recruitsmapoverhaul.client.render.RouteRenderer;
+import me.mss1r.recruitsmapoverhaul.client.map.cache.ChunkTileManager;
+import me.mss1r.recruitsmapoverhaul.client.gui.worldmap.render.ClaimRenderer;
+import me.mss1r.recruitsmapoverhaul.client.gui.worldmap.render.RouteRenderer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.core.BlockPos;
@@ -29,11 +30,13 @@ public final class WorldMapController {
     private final WorldMapCamera camera;
     private final WorldMapRenderer renderer;
     private final WorldMapRouteUi routeUi;
+    private final WorldMapOverlayDispatcher overlays;
 
     private WorldMapContextMenu contextMenu;
     private ClaimInfoMenu claimInfoMenu;
     private boolean initializedOnce = false;
     private long lastVisibleTileUpdateNanos = 0L;
+    private long lastCameraMovementNanos = 0L;
 
     @Nullable
     private RecruitsRoute.Waypoint draggingWaypoint;
@@ -47,6 +50,7 @@ public final class WorldMapController {
         this.camera = new WorldMapCamera(screen, access);
         this.renderer = new WorldMapRenderer(screen, access, camera, tileManager);
         this.routeUi = new WorldMapRouteUi(screen, access);
+        this.overlays = new WorldMapOverlayDispatcher(new WorldMapView(screen, access, camera));
     }
 
     public void init() {
@@ -70,6 +74,9 @@ public final class WorldMapController {
 
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTicks) {
         camera.animate();
+        if (camera.isMoving()) {
+            lastCameraMovementNanos = System.nanoTime();
+        }
         updateVisibleMapTiles();
 
         renderer.renderBackground(guiGraphics);
@@ -78,9 +85,10 @@ public final class WorldMapController {
         renderer.renderMapTiles(guiGraphics);
         renderClaims(guiGraphics);
         renderContextPreview(guiGraphics);
-        renderer.renderPlayerPosition(guiGraphics);
         renderSelection(guiGraphics);
         renderSelectedRoute(guiGraphics, mouseX, mouseY);
+        overlays.renderMap(guiGraphics, mouseX, mouseY, partialTicks);
+        renderer.renderPlayerPosition(guiGraphics);
 
         guiGraphics.flush();
         guiGraphics.disableScissor();
@@ -91,6 +99,7 @@ public final class WorldMapController {
                 access.recruitsmapoverhaul$getHoverBlockZ()));
         renderer.renderFPS(guiGraphics);
         routeUi.render(guiGraphics, mouseX, mouseY, partialTicks);
+        overlays.renderUi(guiGraphics, mouseX, mouseY, partialTicks);
         contextMenu.render(guiGraphics, screen);
         renderClaimInfo(guiGraphics);
         routeUi.renderPopups(guiGraphics, mouseX, mouseY);
@@ -105,6 +114,7 @@ public final class WorldMapController {
         access.recruitsmapoverhaul$setMouse(mouseX, mouseY);
         if (routeUi.handlePopupMouseClicked(mouseX, mouseY)) return true;
         if (routeUi.handleRouteMouseClicked(mouseX, mouseY, this::closeContextMenu)) return true;
+        if (overlays.mouseClicked(mouseX, mouseY, button)) return true;
         if (claimInfoMenu.isVisible() && claimInfoMenu.mouseClicked(mouseX, mouseY, button)) return true;
         if (contextMenu.isVisible() && contextMenu.mouseClicked(mouseX, mouseY, button, screen)) return true;
 
@@ -137,6 +147,10 @@ public final class WorldMapController {
 
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
         access.recruitsmapoverhaul$setMouse(mouseX, mouseY);
+        if (overlays.mouseReleased(mouseX, mouseY, button)) {
+            access.recruitsmapoverhaul$setDragging(false);
+            return true;
+        }
         if (contextMenu.isVisible()) return false;
         if (button == 0) {
             if (draggingWaypointActive && draggingWaypoint != null) {
@@ -153,6 +167,11 @@ public final class WorldMapController {
     public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
         access.recruitsmapoverhaul$setMouse(mouseX, mouseY);
         if (routeUi.isPopupVisible()) return true;
+        if (overlays.mouseDragged(mouseX, mouseY, button, dragX, dragY)) {
+            access.recruitsmapoverhaul$setHoveredChunk(null);
+            access.recruitsmapoverhaul$setSelectedChunk(null);
+            return true;
+        }
         if (draggingWaypointActive && draggingWaypoint != null) {
             access.recruitsmapoverhaul$setHoveredChunk(null);
             access.recruitsmapoverhaul$setSelectedChunk(null);
@@ -177,6 +196,7 @@ public final class WorldMapController {
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollY) {
         access.recruitsmapoverhaul$setMouse(mouseX, mouseY);
         if (routeUi.isPopupVisible()) return true;
+        if (overlays.mouseScrolled(mouseX, mouseY, scrollY)) return true;
         if (claimInfoMenu.isVisible()) claimInfoMenu.close();
         if (contextMenu.isVisible()) contextMenu.close();
         camera.zoomAt(mouseX, mouseY, scrollY);
@@ -186,8 +206,13 @@ public final class WorldMapController {
     public void mouseMoved(double mouseX, double mouseY) {
         access.recruitsmapoverhaul$setMouse(mouseX, mouseY);
         routeUi.mouseMoved(mouseX, mouseY);
+        overlays.mouseMoved(mouseX, mouseY);
 
         if (routeUi.isMouseBlockingMap(mouseX, mouseY)) {
+            access.recruitsmapoverhaul$setHoveredChunk(null);
+            return;
+        }
+        if (overlays.blocksMouse(mouseX, mouseY)) {
             access.recruitsmapoverhaul$setHoveredChunk(null);
             return;
         }
@@ -200,6 +225,7 @@ public final class WorldMapController {
 
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
         if (routeUi.keyPressed(keyCode)) return true;
+        if (overlays.keyPressed(keyCode, scanCode, modifiers)) return true;
 
         if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
             if (claimInfoMenu.isVisible()) {
@@ -442,7 +468,8 @@ public final class WorldMapController {
     private void updateVisibleMapTiles() {
         if (!RecruitsClientConfig.UpdateMapTiles.get()) return;
         long now = System.nanoTime();
-        if (now - lastVisibleTileUpdateNanos < 16_000_000L) return;
+        if (camera.isMoving() || now - lastCameraMovementNanos < 180_000_000L) return;
+        if (now - lastVisibleTileUpdateNanos < 80_000_000L) return;
         lastVisibleTileUpdateNanos = now;
         tileManager.updateVisibleArea(camera.offsetX(), camera.offsetZ(), camera.scale(), screen.width, screen.height);
     }

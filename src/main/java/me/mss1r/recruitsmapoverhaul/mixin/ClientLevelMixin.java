@@ -1,6 +1,6 @@
 package me.mss1r.recruitsmapoverhaul.mixin;
 
-import me.mss1r.recruitsmapoverhaul.client.map.ChunkTileManager;
+import me.mss1r.recruitsmapoverhaul.client.map.cache.ChunkTileManager;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.state.BlockState;

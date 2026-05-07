@@ -1,4 +1,4 @@
-package me.mss1r.recruitsmapoverhaul.client.map;
+package me.mss1r.recruitsmapoverhaul.client.map.sampling;
 
 import com.mojang.blaze3d.platform.NativeImage;
 import net.minecraft.client.multiplayer.ClientLevel;
