@@ -74,26 +74,22 @@ public final class WorldMapRenderer {
         MapFramebufferPass.Frame frame = framebufferPass.begin(guiGraphics, camera, screen.width, screen.height);
         double scaledTileSize = tileSize * frame.fboScale();
 
-        int startTileX = (int) Math.floor(frame.leftWorld() / tileSize) - 1;
-        int endTileX = (int) Math.ceil(frame.rightWorld() / tileSize) + 1;
-        int startTileZ = (int) Math.floor(frame.topWorld() / tileSize) - 1;
-        int endTileZ = (int) Math.ceil(frame.bottomWorld() / tileSize) + 1;
-
         RenderSystem.enableBlend();
         RenderSystem.defaultBlendFunc();
         float brightness = getMapBrightness();
 
-        for (int tileZ = startTileZ; tileZ <= endTileZ; tileZ++) {
-            for (int tileX = startTileX; tileX <= endTileX; tileX++) {
-                ChunkTile tile = tileManager.getTileIfPresent(tileX, tileZ);
-                if (tile == null) continue;
+        for (MapTileRenderPlan.Tile tilePos : MapTileRenderPlan.visibleTiles(
+                frame.leftWorld(), frame.rightWorld(), frame.topWorld(), frame.bottomWorld(), tileSize)) {
+            int tileX = tilePos.x();
+            int tileZ = tilePos.z();
+            ChunkTile tile = tileManager.getTileIfPresent(tileX, tileZ);
+            if (tile == null) continue;
 
-                float x1 = (float) (frame.renderOffsetX() + tileX * scaledTileSize);
-                float z1 = (float) (frame.renderOffsetZ() + tileZ * scaledTileSize);
-                float x2 = (float) (frame.renderOffsetX() + (tileX + 1) * scaledTileSize);
-                float z2 = (float) (frame.renderOffsetZ() + (tileZ + 1) * scaledTileSize);
-                tile.render(guiGraphics, x1, z1, Math.max(1.0f, x2 - x1), Math.max(1.0f, z2 - z1), brightness);
-            }
+            float x1 = (float) (frame.renderOffsetX() + tileX * scaledTileSize);
+            float z1 = (float) (frame.renderOffsetZ() + tileZ * scaledTileSize);
+            float x2 = (float) (frame.renderOffsetX() + (tileX + 1) * scaledTileSize);
+            float z2 = (float) (frame.renderOffsetZ() + (tileZ + 1) * scaledTileSize);
+            tile.render(guiGraphics, x1, z1, Math.max(1.0f, x2 - x1), Math.max(1.0f, z2 - z1), brightness);
         }
 
         framebufferPass.endAndBlit(guiGraphics, frame);

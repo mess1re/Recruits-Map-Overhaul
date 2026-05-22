@@ -86,6 +86,8 @@ dependencies {
     annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
 
     implementation fg.deobf("maven.modrinth:${recruits_modrinth_artifact}:${recruits_modrinth_version}")
+
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
 }
 
 tasks.named('processResources', ProcessResources).configure {
@@ -129,4 +131,8 @@ tasks.named('jar', Jar).configure {
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
+}
+
+tasks.named('test', Test).configure {
+    useJUnitPlatform()
 }

@@ -10,8 +10,9 @@ import java.io.File;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -28,21 +29,29 @@ public class ChunkTileManager {
     private static final int CHUNK_UPDATES_PER_PASS = 6;
     private static final int CHUNK_ATTEMPTS_PER_PASS = 96;
     private static final int MAX_VISIBLE_CHUNK_SCAN = 6144;
+    private static final int MAX_LOADED_TILES = Integer.getInteger("recruitsmapoverhaul.maxLoadedTiles", 768);
+    private static final int MAX_MISSING_TILE_KEYS = Integer.getInteger("recruitsmapoverhaul.maxMissingTiles", 4096);
+    private static final int MAX_LAST_UPDATE_TIMES = Integer.getInteger("recruitsmapoverhaul.maxLastUpdateTimes", 8192);
+    private static final int MAX_LAST_SAVE_TIMES = Integer.getInteger("recruitsmapoverhaul.maxLastSaveTimes", 2048);
     private static final int NEARBY_REFRESH_RADIUS = 1;
     private static ChunkTileManager instance;
-    private final Map<String, ChunkTile> loadedTiles = new HashMap<>();
+    private final AsyncTileSaver tileSaver = new AsyncTileSaver();
+    private final BoundedTileCache<String, ChunkTile> loadedTiles =
+            new BoundedTileCache<>(MAX_LOADED_TILES, (key, tile) -> {
+                queueTileSave(tile);
+                tile.close();
+            });
     private final ArrayDeque<ChunkPos> dirtyChunkUpdates = new ArrayDeque<>();
     private final ArrayDeque<ChunkPos> pendingChunkUpdates = new ArrayDeque<>();
     private final Set<Long> dirtyChunkKeys = new HashSet<>();
     private final Set<Long> pendingChunkKeys = new HashSet<>();
-    private final Set<String> missingTileKeys = new HashSet<>();
-    private final AsyncTileSaver tileSaver = new AsyncTileSaver();
+    private final Set<String> missingTileKeys = new LinkedHashSet<>();
     private final Minecraft mc = Minecraft.getInstance();
     private WorldMapCachePath cachePath;
     private int currentTileX = Integer.MAX_VALUE;
     private int currentTileZ = Integer.MAX_VALUE;
-    private final Map<String, Long> lastUpdateTimes = new HashMap<>();
-    private final Map<String, Long> lastSaveTimes = new HashMap<>();
+    private final BoundedTileCache<String, Long> lastUpdateTimes = new BoundedTileCache<>(MAX_LAST_UPDATE_TIMES, null);
+    private final BoundedTileCache<String, Long> lastSaveTimes = new BoundedTileCache<>(MAX_LAST_SAVE_TIMES, null);
     private long lastVisibleQueueTime = 0L;
     private long lastBackgroundQueueTime = 0L;
     private long lastChunkProcessTime = 0L;
@@ -397,7 +406,7 @@ public class ChunkTileManager {
         if (missingTileKeys.contains(key) || cachePath == null) return null;
         File tileFile = getTileFile(tileX, tileZ);
         if (!tileFile.exists() || tileFile.length() <= 0L) {
-            missingTileKeys.add(key);
+            rememberMissingTileKey(key);
             return null;
         }
         return getOrCreateTile(tileX, tileZ);
@@ -419,29 +428,27 @@ public class ChunkTileManager {
 
     private void saveAndReleaseTiles() {
         saveTiles();
+        loadedTiles.clearWithEviction();
         tileSaver.flush();
-        for (ChunkTile tile : loadedTiles.values()) {
-            tile.close();
-        }
     }
 
     private void saveTiles() {
         if (this.cachePath == null) return;
-        for (ChunkTile tile : loadedTiles.values()) {
+        for (ChunkTile tile : loadedTiles.valuesSnapshot()) {
             queueTileSave(tile);
         }
     }
 
     private void queueTileSave(ChunkTile tile) {
-        if (tile == null) return;
+        if (tile == null || cachePath == null) return;
         tileSaver.saveLater(getTileFile(tile.getTileX(), tile.getTileZ()), tile.createSaveSnapshot());
     }
 
     private void resetRuntimeState() {
-        loadedTiles.clear();
+        loadedTiles.clearWithoutEviction();
         missingTileKeys.clear();
-        lastUpdateTimes.clear();
-        lastSaveTimes.clear();
+        lastUpdateTimes.clearWithoutEviction();
+        lastSaveTimes.clearWithoutEviction();
         pendingChunkUpdates.clear();
         pendingChunkKeys.clear();
         dirtyChunkUpdates.clear();
@@ -454,14 +461,14 @@ public class ChunkTileManager {
     }
 
     public Map<String, ChunkTile> getLoadedTiles() {
-        return loadedTiles;
+        return loadedTiles.snapshot();
     }
 
     public boolean isChunkExplored(ChunkPos chunk) {
         if (cachePath == null) return false;
         int tileX = ChunkTile.chunkToTileCoord(chunk.x);
         int tileZ = ChunkTile.chunkToTileCoord(chunk.z);
-        ChunkTile tile = getOrCreateTile(tileX, tileZ);
+        ChunkTile tile = getTileIfPresent(tileX, tileZ);
         if (tile == null || tile.getImage() == null) return false;
 
         int localX = Math.floorMod(chunk.x, ChunkTile.TILE_SIZE) * ChunkTile.PIXELS_PER_CHUNK + ChunkTile.PIXELS_PER_CHUNK / 2;
@@ -472,6 +479,18 @@ public class ChunkTileManager {
 
     private static String tileKey(int tileX, int tileZ) {
         return tileX + "_" + tileZ;
+    }
+
+    private void rememberMissingTileKey(String key) {
+        missingTileKeys.add(key);
+        while (missingTileKeys.size() > MAX_MISSING_TILE_KEYS) {
+            Iterator<String> iterator = missingTileKeys.iterator();
+            if (!iterator.hasNext()) {
+                return;
+            }
+            iterator.next();
+            iterator.remove();
+        }
     }
 
     private void enqueueDirtyChunk(ChunkPos chunkPos) {

@@ -4,13 +4,17 @@ import com.mojang.blaze3d.platform.NativeImage;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 final class AsyncTileSaver {
+    private static final int MAX_PENDING_SAVES = Integer.getInteger("recruitsmapoverhaul.maxPendingTileSaves", 256);
+
     private final Object lock = new Object();
     private final Map<String, SaveRequest> pendingSaves = new LinkedHashMap<>();
     private final ExecutorService executor = Executors.newSingleThreadExecutor(task -> {
@@ -27,8 +31,10 @@ final class AsyncTileSaver {
         }
 
         SaveRequest replaced;
+        List<SaveRequest> discarded = new ArrayList<>();
         synchronized (lock) {
             replaced = pendingSaves.put(file.getAbsolutePath(), new SaveRequest(file, snapshot));
+            trimPendingSaves(discarded);
             if (!workerRunning) {
                 workerRunning = true;
                 executor.execute(this::drainQueue);
@@ -38,6 +44,7 @@ final class AsyncTileSaver {
         if (replaced != null) {
             replaced.close();
         }
+        discarded.forEach(SaveRequest::close);
     }
 
     void flush() {
@@ -69,6 +76,14 @@ final class AsyncTileSaver {
             }
 
             request.writeAndClose();
+        }
+    }
+
+    private void trimPendingSaves(List<SaveRequest> discarded) {
+        Iterator<SaveRequest> iterator = pendingSaves.values().iterator();
+        while (pendingSaves.size() > MAX_PENDING_SAVES && iterator.hasNext()) {
+            discarded.add(iterator.next());
+            iterator.remove();
         }
     }
 
