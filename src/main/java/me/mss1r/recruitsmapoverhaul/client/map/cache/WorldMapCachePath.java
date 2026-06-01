@@ -6,12 +6,11 @@ import net.minecraft.world.level.storage.LevelResource;
 
 import java.io.File;
 import java.nio.charset.StandardCharsets;
-import java.util.HashSet;
-import java.util.Set;
 import java.util.UUID;
 
 final class WorldMapCachePath {
-    private static final String OVERVIEW_DIRECTORY = "overview_v5";
+    private static final int OVERVIEW_CACHE_VERSION = 1;
+    private static final String OVERVIEW_DIRECTORY = "overview_v" + OVERVIEW_CACHE_VERSION;
 
     private final String storageId;
     private final File directory;
@@ -101,76 +100,6 @@ final class WorldMapCachePath {
                 baseTileIndex = BaseTileIndex.scan(directory);
             }
             return baseTileIndex;
-        }
-    }
-
-    private static final class BaseTileIndex {
-        private final Set<Long> tiles;
-
-        private BaseTileIndex(Set<Long> tiles) {
-            this.tiles = tiles;
-        }
-
-        private static BaseTileIndex scan(File directory) {
-            Set<Long> tiles = new HashSet<>();
-            File[] files = directory.listFiles();
-            if (files != null) {
-                for (File file : files) {
-                    if (file.isFile() && file.length() > 0L) {
-                        int[] coords = parseTileName(file.getName());
-                        if (coords != null) {
-                            tiles.add(pack(coords[0], coords[1]));
-                        }
-                    }
-                }
-            }
-            return new BaseTileIndex(tiles);
-        }
-
-        private synchronized boolean hasAny(int minX, int maxX, int minZ, int maxZ) {
-            for (long tile : tiles) {
-                int x = unpackX(tile);
-                int z = unpackZ(tile);
-                if (x >= minX && x <= maxX && z >= minZ && z <= maxZ) {
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        private synchronized void add(int tileX, int tileZ) {
-            tiles.add(pack(tileX, tileZ));
-        }
-
-        private static int[] parseTileName(String name) {
-            if (name == null || !name.endsWith(".png")) {
-                return null;
-            }
-
-            int separator = name.indexOf('_');
-            if (separator <= 0 || separator >= name.length() - 5) {
-                return null;
-            }
-
-            try {
-                int x = Integer.parseInt(name.substring(0, separator));
-                int z = Integer.parseInt(name.substring(separator + 1, name.length() - 4));
-                return new int[]{x, z};
-            } catch (NumberFormatException ignored) {
-                return null;
-            }
-        }
-
-        private static long pack(int x, int z) {
-            return ((long) x << 32) ^ (z & 0xFFFFFFFFL);
-        }
-
-        private static int unpackX(long packed) {
-            return (int) (packed >> 32);
-        }
-
-        private static int unpackZ(long packed) {
-            return (int) packed;
         }
     }
 }

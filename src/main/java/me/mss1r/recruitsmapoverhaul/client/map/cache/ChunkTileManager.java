@@ -152,8 +152,11 @@ public class ChunkTileManager {
         int localChunkZ = Math.floorMod(chunkPos.z, ChunkTile.TILE_SIZE);
 
         ChunkImage chunkImage = new ChunkImage(mc.level, chunkPos);
-        tile.updateFromChunkImage(chunkImage, localChunkX, localChunkZ);
-        chunkImage.close();
+        try {
+            tile.updateFromChunkImage(chunkImage, localChunkX, localChunkZ);
+        } finally {
+            chunkImage.close();
+        }
         invalidateOverviewAncestors(tileX, tileZ);
         saveTileIfDue(tile);
         lastUpdateTimes.put("chunk:" + chunkPos.x + "_" + chunkPos.z, System.currentTimeMillis());
@@ -183,8 +186,11 @@ public class ChunkTileManager {
                 ChunkPos chunkPos = new ChunkPos(startChunkX + cx, startChunkZ + cz);
                 if (isChunkReadyForMap(chunkPos)) {
                     ChunkImage chunkImage = new ChunkImage(mc.level, chunkPos);
-                    tile.updateFromChunkImage(chunkImage, cx, cz);
-                    chunkImage.close();
+                    try {
+                        tile.updateFromChunkImage(chunkImage, cx, cz);
+                    } finally {
+                        chunkImage.close();
+                    }
                 }
             }
         }
@@ -276,18 +282,7 @@ public class ChunkTileManager {
             }
         }
 
-        candidates.sort(Comparator.comparingDouble(pos -> {
-            double dx = pos.x + 0.5 - centerChunkX;
-            double dz = pos.z + 0.5 - centerChunkZ;
-            return dx * dx + dz * dz;
-        }));
-
-        for (ChunkPos candidate : candidates) {
-            long key = candidate.toLong();
-            if (pendingChunkKeys.add(key)) {
-                pendingChunkUpdates.addLast(candidate);
-            }
-        }
+        enqueueClosestPendingChunks(candidates, centerChunkX, centerChunkZ);
     }
 
     private void enqueueAroundPlayer(int chunkRadius) {
@@ -321,6 +316,10 @@ public class ChunkTileManager {
             }
         }
 
+        enqueueClosestPendingChunks(candidates, centerChunkX, centerChunkZ);
+    }
+
+    private void enqueueClosestPendingChunks(List<ChunkPos> candidates, double centerChunkX, double centerChunkZ) {
         candidates.sort(Comparator.comparingDouble(pos -> {
             double dx = pos.x + 0.5 - centerChunkX;
             double dz = pos.z + 0.5 - centerChunkZ;
@@ -340,41 +339,53 @@ public class ChunkTileManager {
         if (now - lastChunkProcessTime < CHUNK_PROCESS_INTERVAL_MS) return;
         lastChunkProcessTime = now;
 
-        int updates = 0;
-        int attempts = 0;
-        long startNanos = System.nanoTime();
-        while (updates < CHUNK_UPDATES_PER_PASS && attempts < CHUNK_ATTEMPTS_PER_PASS && !dirtyChunkUpdates.isEmpty()) {
-            attempts++;
-            ChunkPos chunkPos = dirtyChunkUpdates.removeFirst();
-            dirtyChunkKeys.remove(chunkPos.toLong());
+        ChunkUpdatePass pass = new ChunkUpdatePass(System.nanoTime());
+        processChunkQueue(dirtyChunkUpdates, dirtyChunkKeys, pass);
+        processChunkQueue(pendingChunkUpdates, pendingChunkKeys, pass);
+    }
+
+    private void processChunkQueue(ArrayDeque<ChunkPos> queue, Set<Long> keys, ChunkUpdatePass pass) {
+        while (pass.canAttempt() && !queue.isEmpty()) {
+            pass.countAttempt();
+            ChunkPos chunkPos = queue.removeFirst();
+            keys.remove(chunkPos.toLong());
             if (isChunkReadyForMap(chunkPos)) {
                 if (updateChunk(chunkPos)) {
-                    updates++;
+                    pass.countUpdate();
                 } else {
                     deferChunkUpdate(chunkPos);
                     break;
                 }
-                if (updates > 0 && System.nanoTime() - startNanos >= CHUNK_UPDATE_TIME_BUDGET_NS) {
+                if (pass.isTimeBudgetSpent()) {
                     break;
                 }
             }
         }
+    }
 
-        while (updates < CHUNK_UPDATES_PER_PASS && attempts < CHUNK_ATTEMPTS_PER_PASS && !pendingChunkUpdates.isEmpty()) {
+    private static final class ChunkUpdatePass {
+        private final long startNanos;
+        private int updates;
+        private int attempts;
+
+        private ChunkUpdatePass(long startNanos) {
+            this.startNanos = startNanos;
+        }
+
+        private boolean canAttempt() {
+            return updates < CHUNK_UPDATES_PER_PASS && attempts < CHUNK_ATTEMPTS_PER_PASS;
+        }
+
+        private void countAttempt() {
             attempts++;
-            ChunkPos chunkPos = pendingChunkUpdates.removeFirst();
-            pendingChunkKeys.remove(chunkPos.toLong());
-            if (isChunkReadyForMap(chunkPos)) {
-                if (updateChunk(chunkPos)) {
-                    updates++;
-                } else {
-                    deferChunkUpdate(chunkPos);
-                    break;
-                }
-                if (updates > 0 && System.nanoTime() - startNanos >= CHUNK_UPDATE_TIME_BUDGET_NS) {
-                    break;
-                }
-            }
+        }
+
+        private void countUpdate() {
+            updates++;
+        }
+
+        private boolean isTimeBudgetSpent() {
+            return updates > 0 && System.nanoTime() - startNanos >= CHUNK_UPDATE_TIME_BUDGET_NS;
         }
     }
 
