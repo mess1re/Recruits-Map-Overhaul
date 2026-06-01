@@ -14,11 +14,13 @@ import org.lwjgl.opengl.GL11;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
 
 public class ChunkTile {
     private static final int MAX_MIP_LEVEL = 3;
+    public static final int MAX_OVERVIEW_LEVEL = 6;
 
-    private final int tileX, tileZ;
+    private final int tileX, tileZ, level;
     private NativeImage image;
     private final NativeImage[] mipImages = new NativeImage[MAX_MIP_LEVEL + 1];
     private final DynamicTexture[] textures = new DynamicTexture[MAX_MIP_LEVEL + 1];
@@ -26,29 +28,26 @@ public class ChunkTile {
     private final boolean[] textureDirty = new boolean[MAX_MIP_LEVEL + 1];
     private final boolean[] textureSamplingApplied = new boolean[MAX_MIP_LEVEL + 1];
     private boolean needsUpdate = false;
+    private boolean transparentPixelsKnown = false;
+    private boolean hasTransparentPixels = false;
 
     public static final int TILE_SIZE = 10;
     public static final int PIXELS_PER_CHUNK = 16;
     public static final int TILE_PIXEL_SIZE = TILE_SIZE * PIXELS_PER_CHUNK;
 
     public ChunkTile(int tileX, int tileZ) {
+        this(tileX, tileZ, 0);
+    }
+
+    public ChunkTile(int tileX, int tileZ, int level) {
         this.tileX = tileX;
         this.tileZ = tileZ;
+        this.level = Math.max(0, Math.min(MAX_OVERVIEW_LEVEL, level));
     }
 
     public void loadOrCreate(File tileFile) {
-        try {
-            if (tileFile.exists() && tileFile.length() > 0) {
-                byte[] fileData = java.nio.file.Files.readAllBytes(tileFile.toPath());
-                this.image = NativeImage.read(fileData);
-                if (this.image.getWidth() != TILE_PIXEL_SIZE ||
-                        this.image.getHeight() != TILE_PIXEL_SIZE) {
-                    this.image.close();
-                    this.image = null;
-                }
-            }
-        } catch (IOException ignored) {
-            this.image = null;
+        if (tileFile.exists() && tileFile.length() > 0) {
+            this.image = readImage(tileFile);
         }
 
         if (this.image == null) {
@@ -58,6 +57,8 @@ public class ChunkTile {
             }
             this.needsUpdate = true;
         }
+        this.transparentPixelsKnown = false;
+        this.hasTransparentPixels = false;
         invalidateTextures(true);
     }
 
@@ -75,6 +76,8 @@ public class ChunkTile {
         }
 
         this.needsUpdate = true;
+        this.transparentPixelsKnown = false;
+        this.hasTransparentPixels = false;
         invalidateTextures(true);
     }
 
@@ -96,6 +99,8 @@ public class ChunkTile {
                     }
                 }
                 this.needsUpdate = true;
+                this.transparentPixelsKnown = false;
+                this.hasTransparentPixels = false;
                 invalidateTextures(true);
             }
             existingImage.close();
@@ -114,7 +119,7 @@ public class ChunkTile {
             this.textures[mipLevel] = new DynamicTexture(copyImage(levelImage));
             this.textures[mipLevel].setFilter(false, false);
             this.textureIds[mipLevel] = mc.getTextureManager().register(
-                    "chunktile_" + tileX + "_" + tileZ + "_mip" + mipLevel,
+                    "chunktile_l" + level + "_" + tileX + "_" + tileZ + "_mip" + mipLevel,
                     this.textures[mipLevel]);
             this.textureDirty[mipLevel] = false;
             this.textureSamplingApplied[mipLevel] = false;
@@ -183,7 +188,7 @@ public class ChunkTile {
                 | (red / count);
     }
 
-    private static NativeImage copyImage(NativeImage source) {
+    static NativeImage copyImage(NativeImage source) {
         NativeImage copy = new NativeImage(NativeImage.Format.RGBA, source.getWidth(), source.getHeight(), false);
         for (int y = 0; y < source.getHeight(); y++) {
             for (int x = 0; x < source.getWidth(); x++) {
@@ -222,7 +227,21 @@ public class ChunkTile {
     }
 
     public void render(GuiGraphics guiGraphics, float x, float y, float width, float height, float brightness) {
-        ResourceLocation renderTextureId = ensureTextureReady(chooseMipLevel(width / TILE_PIXEL_SIZE));
+        renderRegion(guiGraphics, x, y, width, height, 0.0f, 0.0f, 1.0f, 1.0f, brightness);
+    }
+
+    public void renderRegion(GuiGraphics guiGraphics,
+                             float x,
+                             float y,
+                             float width,
+                             float height,
+                             float u0,
+                             float v0,
+                             float u1,
+                             float v1,
+                             float brightness) {
+        float sourceFraction = Math.max(0.001f, Math.max(Math.abs(u1 - u0), Math.abs(v1 - v0)));
+        ResourceLocation renderTextureId = ensureTextureReady(chooseMipLevel(width / (TILE_PIXEL_SIZE * sourceFraction)));
         if (renderTextureId != null && width > 0.0f && height > 0.0f) {
             VertexConsumer consumer = guiGraphics.bufferSource().getBuffer(RenderType.text(renderTextureId));
             Matrix4f matrix = guiGraphics.pose().last().pose();
@@ -231,10 +250,10 @@ public class ChunkTile {
             int light = 0xF000F0;
             int color = Math.max(0, Math.min(255, Math.round(brightness * 255.0f)));
 
-            consumer.vertex(matrix, x, y1, 0.0f).color(color, color, color, 255).uv(0.0f, 1.0f).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(light).normal(0, 0, 1).endVertex();
-            consumer.vertex(matrix, x1, y1, 0.0f).color(color, color, color, 255).uv(1.0f, 1.0f).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(light).normal(0, 0, 1).endVertex();
-            consumer.vertex(matrix, x1, y, 0.0f).color(color, color, color, 255).uv(1.0f, 0.0f).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(light).normal(0, 0, 1).endVertex();
-            consumer.vertex(matrix, x, y, 0.0f).color(color, color, color, 255).uv(0.0f, 0.0f).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(light).normal(0, 0, 1).endVertex();
+            consumer.vertex(matrix, x, y1, 0.0f).color(color, color, color, 255).uv(u0, v1).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(light).normal(0, 0, 1).endVertex();
+            consumer.vertex(matrix, x1, y1, 0.0f).color(color, color, color, 255).uv(u1, v1).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(light).normal(0, 0, 1).endVertex();
+            consumer.vertex(matrix, x1, y, 0.0f).color(color, color, color, 255).uv(u1, v0).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(light).normal(0, 0, 1).endVertex();
+            consumer.vertex(matrix, x, y, 0.0f).color(color, color, color, 255).uv(u0, v0).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(light).normal(0, 0, 1).endVertex();
         }
     }
 
@@ -246,7 +265,31 @@ public class ChunkTile {
 
     public int getTileX() { return tileX; }
     public int getTileZ() { return tileZ; }
+    public int getLevel() { return level; }
     public NativeImage getImage() { return image; }
+    public boolean hasTransparentPixels() {
+        if (this.image == null) {
+            return true;
+        }
+
+        if (transparentPixelsKnown) {
+            return hasTransparentPixels;
+        }
+
+        for (int y = 0; y < this.image.getHeight(); y++) {
+            for (int x = 0; x < this.image.getWidth(); x++) {
+                if (((this.image.getPixelRGBA(x, y) >> 24) & 0xFF) == 0) {
+                    hasTransparentPixels = true;
+                    transparentPixelsKnown = true;
+                    return true;
+                }
+            }
+        }
+
+        hasTransparentPixels = false;
+        transparentPixelsKnown = true;
+        return false;
+    }
     public ResourceLocation getTextureId() {
         return ensureTextureReady(0);
     }
@@ -266,6 +309,31 @@ public class ChunkTile {
     }
     public void markAccessed() { }
     public void markNeedsUpdate() { this.needsUpdate = true; }
+
+    void replaceImage(NativeImage image, boolean needsUpdate) {
+        closeTextures();
+        try { if (this.image != null) this.image.close(); } catch (Exception ignored) {}
+        this.image = image;
+        this.needsUpdate = needsUpdate;
+        this.transparentPixelsKnown = false;
+        this.hasTransparentPixels = false;
+        invalidateTextures(true);
+    }
+
+    static NativeImage readImage(File tileFile) {
+        try {
+            if (tileFile.exists() && tileFile.length() > 0) {
+                NativeImage loadedImage = NativeImage.read(Files.readAllBytes(tileFile.toPath()));
+                if (loadedImage.getWidth() == TILE_PIXEL_SIZE &&
+                        loadedImage.getHeight() == TILE_PIXEL_SIZE) {
+                    return loadedImage;
+                }
+                loadedImage.close();
+            }
+        } catch (IOException ignored) {
+        }
+        return null;
+    }
 
     private void invalidateTextures(boolean includeBase) {
         for (int i = includeBase ? 0 : 1; i <= MAX_MIP_LEVEL; i++) {

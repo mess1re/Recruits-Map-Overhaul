@@ -31,6 +31,10 @@ final class BoundedTileCache<K, V> {
         trimToBudget();
     }
 
+    V removeWithoutEviction(K key) {
+        return entries.remove(key);
+    }
+
     int size() {
         return entries.size();
     }

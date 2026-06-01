@@ -1,5 +1,6 @@
 package me.mss1r.recruitsmapoverhaul.client.map.cache;
 
+import com.mojang.blaze3d.platform.NativeImage;
 import me.mss1r.recruitsmapoverhaul.client.map.sampling.ChunkImage;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
@@ -33,9 +34,12 @@ public class ChunkTileManager {
     private static final int MAX_MISSING_TILE_KEYS = Integer.getInteger("recruitsmapoverhaul.maxMissingTiles", 4096);
     private static final int MAX_LAST_UPDATE_TIMES = Integer.getInteger("recruitsmapoverhaul.maxLastUpdateTimes", 8192);
     private static final int MAX_LAST_SAVE_TIMES = Integer.getInteger("recruitsmapoverhaul.maxLastSaveTimes", 2048);
+    private static final int TILE_LOAD_RESULTS_PER_FRAME = Integer.getInteger("recruitsmapoverhaul.tileLoadResultsPerFrame", 12);
     private static final int NEARBY_REFRESH_RADIUS = 1;
     private static ChunkTileManager instance;
     private final AsyncTileSaver tileSaver = new AsyncTileSaver();
+    private final AsyncTileLoader tileLoader = new AsyncTileLoader();
+    private final AsyncOverviewTileBuilder overviewBuilder = new AsyncOverviewTileBuilder();
     private final BoundedTileCache<String, ChunkTile> loadedTiles =
             new BoundedTileCache<>(MAX_LOADED_TILES, (key, tile) -> {
                 queueTileSave(tile);
@@ -126,33 +130,38 @@ public class ChunkTileManager {
     }
 
     private void updateTile(int tileX, int tileZ) {
-        ChunkTile tile = getOrCreateTile(tileX, tileZ);
-        File tileFile = getTileFile(tileX, tileZ);
-        if (tileFile.exists()) tile.mergeWithExistingTile(tileFile);
+        ChunkTile tile = getOrRequestTileForUpdate(tileX, tileZ);
+        if (tile == null) return;
         updateOnlyLoadedChunks(tile);
         queueTileSave(tile);
         lastUpdateTimes.put("tile:" + tileX + "_" + tileZ, System.currentTimeMillis());
     }
 
-    private void updateChunk(ChunkPos chunkPos) {
-        if (!isChunkReadyForMap(chunkPos)) return;
+    private boolean updateChunk(ChunkPos chunkPos) {
+        if (!isChunkReadyForMap(chunkPos)) return false;
 
         int tileX = ChunkTile.chunkToTileCoord(chunkPos.x);
         int tileZ = ChunkTile.chunkToTileCoord(chunkPos.z);
-        missingTileKeys.remove(tileKey(tileX, tileZ));
-        ChunkTile tile = getOrCreateTile(tileX, tileZ);
+        missingTileKeys.remove(tileKey(0, tileX, tileZ));
+        ChunkTile tile = getOrRequestTileForUpdate(tileX, tileZ);
+        if (tile == null) {
+            return false;
+        }
+
         int localChunkX = Math.floorMod(chunkPos.x, ChunkTile.TILE_SIZE);
         int localChunkZ = Math.floorMod(chunkPos.z, ChunkTile.TILE_SIZE);
 
         ChunkImage chunkImage = new ChunkImage(mc.level, chunkPos);
         tile.updateFromChunkImage(chunkImage, localChunkX, localChunkZ);
         chunkImage.close();
+        invalidateOverviewAncestors(tileX, tileZ);
         saveTileIfDue(tile);
         lastUpdateTimes.put("chunk:" + chunkPos.x + "_" + chunkPos.z, System.currentTimeMillis());
+        return true;
     }
 
     private void saveTileIfDue(ChunkTile tile) {
-        String key = tile.getTileX() + "_" + tile.getTileZ();
+        String key = tileKey(tile.getLevel(), tile.getTileX(), tile.getTileZ());
         long now = System.currentTimeMillis();
         Long lastSave = lastSaveTimes.get(key);
         if (lastSave != null && now - lastSave < TILE_SAVE_INTERVAL_MS) {
@@ -184,6 +193,8 @@ public class ChunkTileManager {
     public void updateVisibleArea(double offsetX, double offsetZ, double scale, int screenWidth, int screenHeight) {
         if (mc.level == null || mc.player == null || cachePath == null) return;
 
+        drainTileLoadResults(TILE_LOAD_RESULTS_PER_FRAME);
+
         long now = System.currentTimeMillis();
         if (now - lastVisibleQueueTime >= VISIBLE_QUEUE_INTERVAL_MS) {
             lastVisibleQueueTime = now;
@@ -195,6 +206,8 @@ public class ChunkTileManager {
     public void updateAroundPlayer(int chunkRadius) {
         if (mc.level == null || mc.player == null) return;
         if (cachePath == null) initialize(mc.level);
+
+        drainTileLoadResults(TILE_LOAD_RESULTS_PER_FRAME);
 
         long now = System.currentTimeMillis();
         if (now - lastBackgroundQueueTime >= BACKGROUND_QUEUE_INTERVAL_MS) {
@@ -335,9 +348,13 @@ public class ChunkTileManager {
             ChunkPos chunkPos = dirtyChunkUpdates.removeFirst();
             dirtyChunkKeys.remove(chunkPos.toLong());
             if (isChunkReadyForMap(chunkPos)) {
-                updateChunk(chunkPos);
-                updates++;
-                if (System.nanoTime() - startNanos >= CHUNK_UPDATE_TIME_BUDGET_NS) {
+                if (updateChunk(chunkPos)) {
+                    updates++;
+                } else {
+                    deferChunkUpdate(chunkPos);
+                    break;
+                }
+                if (updates > 0 && System.nanoTime() - startNanos >= CHUNK_UPDATE_TIME_BUDGET_NS) {
                     break;
                 }
             }
@@ -348,9 +365,13 @@ public class ChunkTileManager {
             ChunkPos chunkPos = pendingChunkUpdates.removeFirst();
             pendingChunkKeys.remove(chunkPos.toLong());
             if (isChunkReadyForMap(chunkPos)) {
-                updateChunk(chunkPos);
-                updates++;
-                if (System.nanoTime() - startNanos >= CHUNK_UPDATE_TIME_BUDGET_NS) {
+                if (updateChunk(chunkPos)) {
+                    updates++;
+                } else {
+                    deferChunkUpdate(chunkPos);
+                    break;
+                }
+                if (updates > 0 && System.nanoTime() - startNanos >= CHUNK_UPDATE_TIME_BUDGET_NS) {
                     break;
                 }
             }
@@ -383,20 +404,54 @@ public class ChunkTileManager {
     }
 
     public ChunkTile getOrCreateTile(int tileX, int tileZ) {
-        String key = tileKey(tileX, tileZ);
+        return getOrRequestTileForUpdate(tileX, tileZ);
+    }
+
+    private ChunkTile getOrRequestTileForUpdate(int tileX, int tileZ) {
+        String key = tileKey(0, tileX, tileZ);
         missingTileKeys.remove(key);
         ChunkTile tile = loadedTiles.get(key);
-        if (tile == null) {
-            tile = new ChunkTile(tileX, tileZ);
-            tile.loadOrCreate(getTileFile(tileX, tileZ));
-            loadedTiles.put(key, tile);
+        if (tile != null) {
+            tile.markAccessed();
+            return tile;
         }
+
+        File tileFile = getTileFile(0, tileX, tileZ);
+        if (tileFile.exists() && tileFile.length() > 0L) {
+            tileLoader.request(cachePath, tileFile, 0, tileX, tileZ);
+            return null;
+        }
+
+        tile = new ChunkTile(tileX, tileZ);
+        tile.loadOrCreate(tileFile);
+        loadedTiles.put(key, tile);
         tile.markAccessed();
         return tile;
     }
 
     public ChunkTile getTileIfPresent(int tileX, int tileZ) {
-        String key = tileKey(tileX, tileZ);
+        return getTileIfPresent(0, tileX, tileZ);
+    }
+
+    public ChunkTile getLoadedTile(int level, int tileX, int tileZ) {
+        level = Math.max(0, Math.min(ChunkTile.MAX_OVERVIEW_LEVEL, level));
+        ChunkTile tile = loadedTiles.get(tileKey(level, tileX, tileZ));
+        if (tile != null) {
+            tile.markAccessed();
+        }
+        return tile;
+    }
+
+    public boolean hasAnySourceTile(int level, int tileX, int tileZ) {
+        if (cachePath == null) {
+            return false;
+        }
+        return cachePath.hasAnyBaseTileInSubtree(level, tileX, tileZ);
+    }
+
+    public ChunkTile getTileIfPresent(int level, int tileX, int tileZ) {
+        level = Math.max(0, Math.min(ChunkTile.MAX_OVERVIEW_LEVEL, level));
+        String key = tileKey(level, tileX, tileZ);
         ChunkTile tile = loadedTiles.get(key);
         if (tile != null) {
             tile.markAccessed();
@@ -404,16 +459,68 @@ public class ChunkTileManager {
         }
 
         if (missingTileKeys.contains(key) || cachePath == null) return null;
-        File tileFile = getTileFile(tileX, tileZ);
-        if (!tileFile.exists() || tileFile.length() <= 0L) {
+        File tileFile = getTileFile(level, tileX, tileZ);
+        if (tileFile.exists() && tileFile.length() > 0L) {
+            tileLoader.request(cachePath, tileFile, level, tileX, tileZ);
+            return null;
+        }
+
+        if (level <= 0) {
             rememberMissingTileKey(key);
             return null;
         }
-        return getOrCreateTile(tileX, tileZ);
+
+        overviewBuilder.request(cachePath, level, tileX, tileZ);
+        return null;
     }
 
-    private File getTileFile(int tileX, int tileZ) {
-        return cachePath.tileFile(tileX, tileZ);
+    public void prepareRenderFrame() {
+        drainTileLoadResults(TILE_LOAD_RESULTS_PER_FRAME);
+    }
+
+    private void drainTileLoadResults(int maxResults) {
+        if (cachePath == null) {
+            return;
+        }
+
+        for (AsyncTileLoader.Result result : tileLoader.drainCompleted(maxResults)) {
+            if (result.cachePath() != cachePath) {
+                result.close();
+                continue;
+            }
+
+            int level = result.level();
+            int tileX = result.tileX();
+            int tileZ = result.tileZ();
+            String key = tileKey(level, tileX, tileZ);
+            NativeImage image = result.takeImage();
+            if (image == null) {
+                if (level <= 0) {
+                    rememberMissingTileKey(key);
+                }
+                continue;
+            }
+
+            ChunkTile existing = loadedTiles.get(key);
+            if (existing != null) {
+                try {
+                    image.close();
+                } catch (Exception ignored) {
+                }
+                existing.markAccessed();
+                continue;
+            }
+
+            ChunkTile tile = new ChunkTile(tileX, tileZ, level);
+            tile.replaceImage(image, false);
+            tile.markAccessed();
+            missingTileKeys.remove(key);
+            loadedTiles.put(key, tile);
+        }
+    }
+
+    private File getTileFile(int level, int tileX, int tileZ) {
+        return cachePath.tileFile(level, tileX, tileZ);
     }
 
     public void close() {
@@ -441,7 +548,10 @@ public class ChunkTileManager {
 
     private void queueTileSave(ChunkTile tile) {
         if (tile == null || cachePath == null) return;
-        tileSaver.saveLater(getTileFile(tile.getTileX(), tile.getTileZ()), tile.createSaveSnapshot());
+        if (tile.getLevel() <= 0) {
+            cachePath.noteBaseTileChanged(tile.getTileX(), tile.getTileZ());
+        }
+        tileSaver.saveLater(getTileFile(tile.getLevel(), tile.getTileX(), tile.getTileZ()), tile.createSaveSnapshot());
     }
 
     private void resetRuntimeState() {
@@ -453,6 +563,8 @@ public class ChunkTileManager {
         pendingChunkKeys.clear();
         dirtyChunkUpdates.clear();
         dirtyChunkKeys.clear();
+        tileLoader.clear();
+        overviewBuilder.clear();
         currentTileX = Integer.MAX_VALUE;
         currentTileZ = Integer.MAX_VALUE;
         lastVisibleQueueTime = 0L;
@@ -477,8 +589,30 @@ public class ChunkTileManager {
         return (tile.getImage().getPixelRGBA(localX, localZ) >> 24 & 0xFF) > 0;
     }
 
-    private static String tileKey(int tileX, int tileZ) {
-        return tileX + "_" + tileZ;
+    private void invalidateOverviewAncestors(int baseTileX, int baseTileZ) {
+        for (int level = 1; level <= ChunkTile.MAX_OVERVIEW_LEVEL; level++) {
+            int divisor = 1 << level;
+            int tileX = Math.floorDiv(baseTileX, divisor);
+            int tileZ = Math.floorDiv(baseTileZ, divisor);
+            String key = tileKey(level, tileX, tileZ);
+            missingTileKeys.remove(key);
+
+            ChunkTile staleTile = loadedTiles.removeWithoutEviction(key);
+            if (staleTile != null) {
+                staleTile.close();
+            }
+
+            File file = getTileFile(level, tileX, tileZ);
+            overviewBuilder.discard(file);
+            tileSaver.discard(file);
+            if (file.exists() && !file.delete()) {
+                file.deleteOnExit();
+            }
+        }
+    }
+
+    private static String tileKey(int level, int tileX, int tileZ) {
+        return "l" + level + ":" + tileX + "_" + tileZ;
     }
 
     private void rememberMissingTileKey(String key) {
@@ -506,6 +640,13 @@ public class ChunkTileManager {
         if (dirtyChunkKeys.contains(key)) {
             return;
         }
+        if (pendingChunkKeys.add(key)) {
+            pendingChunkUpdates.addLast(chunkPos);
+        }
+    }
+
+    private void deferChunkUpdate(ChunkPos chunkPos) {
+        long key = chunkPos.toLong();
         if (pendingChunkKeys.add(key)) {
             pendingChunkUpdates.addLast(chunkPos);
         }

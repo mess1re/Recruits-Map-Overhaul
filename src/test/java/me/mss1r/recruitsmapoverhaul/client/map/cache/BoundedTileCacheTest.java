@@ -45,6 +45,20 @@ class BoundedTileCacheTest {
     }
 
     @Test
+    void removeWithoutEvictionDoesNotNotifyListener() {
+        List<String> evicted = new ArrayList<>();
+        BoundedTileCache<String, String> cache = new BoundedTileCache<>(2, (key, value) -> evicted.add(key));
+
+        cache.put("a", "A");
+        cache.put("b", "B");
+
+        assertEquals("A", cache.removeWithoutEviction("a"));
+        assertEquals(1, cache.size());
+        assertFalse(cache.snapshot().containsKey("a"));
+        assertTrue(evicted.isEmpty());
+    }
+
+    @Test
     void clearWithEvictionNotifiesListener() {
         List<String> evicted = new ArrayList<>();
         BoundedTileCache<String, String> cache = new BoundedTileCache<>(2, (key, value) -> evicted.add(key));

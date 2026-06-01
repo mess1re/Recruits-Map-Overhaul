@@ -47,6 +47,21 @@ final class AsyncTileSaver {
         discarded.forEach(SaveRequest::close);
     }
 
+    void discard(File file) {
+        if (file == null) {
+            return;
+        }
+
+        SaveRequest discarded;
+        synchronized (lock) {
+            discarded = pendingSaves.remove(file.getAbsolutePath());
+        }
+
+        if (discarded != null) {
+            discarded.close();
+        }
+    }
+
     void flush() {
         synchronized (lock) {
             while (workerRunning || !pendingSaves.isEmpty()) {

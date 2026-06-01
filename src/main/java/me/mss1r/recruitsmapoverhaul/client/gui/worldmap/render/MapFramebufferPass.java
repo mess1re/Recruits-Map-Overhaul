@@ -25,7 +25,7 @@ final class MapFramebufferPass implements AutoCloseable {
         ensureFramebuffer(minecraft.getWindow().getWidth(), minecraft.getWindow().getHeight());
 
         Frame frame = Frame.fromCamera(camera, screenWidth, screenHeight);
-        framebuffer.setClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        framebuffer.setClearColor(0.0f, 0.0f, 0.0f, 0.0f);
         framebuffer.bindWrite(true);
         framebuffer.clear(Minecraft.ON_OSX);
         framebuffer.bindWrite(true);
